@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calendario de Reservas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;500&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Raleway', sans-serif;
+      background-color: #e7ceb4;
+    }
+    .card {
+      background-color: rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 1rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    }
+    .column-header {
+      background-color: rgba(255, 255, 255, 0.5);
+      font-weight: bold;
+      text-align: center;
+      padding: 0.75rem;
+      border-bottom: 2px solid rgba(0, 0, 0, 0.2);
+      user-select: none;
+    }
+    .hour-slot, .res-slot {
+      min-height: 50px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: background-color 0.15s;
+      position: relative;
+    }
+    .hour-slot {
+      font-weight: 600;
+      background-color: rgba(255, 255, 255, 0.4);
+      cursor: default;
+    }
+    .res-slot:hover {
+      background-color: rgba(255, 255, 255, 0.55);
+    }
+    .res-content {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.85rem;
+      line-height: 1.2;
+      text-align: center;
+      width: 100%;
+      padding: 0 4px;
+    }
+    /* Modal Styles */
+    #modal-bg {
+      position: fixed;
+      inset: 0;
+      background-color: rgba(0,0,0,0.5);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    #modal {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 1rem;
+      width: 360px;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.25);
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    #modal h2 {
+      margin-bottom: 1rem;
+      font-weight: 700;
+      font-size: 1.25rem;
+      text-align: center;
+    }
+    #modal label {
+      display: block;
+      margin-top: 0.75rem;
+      font-weight: 600;
+    }
+    #modal input, #modal select, #modal textarea {
+      width: 100%;
+      padding: 0.5rem;
+      margin-top: 0.25rem;
+      border: 1px solid #ccc;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    #modal select[multiple] {
+      height: 140px;
+    }
+    #modal button {
+      margin-top: 1.25rem;
+      width: 100%;
+      padding: 0.75rem;
+      font-weight: 700;
+      border: none;
+      border-radius: 0.5rem;
+      cursor: pointer;
+    }
+    #btn-delete {
+      background-color: #e3342f;
+      color: white;
+      margin-top: 0.5rem;
+    }
+    #btn-cancel {
+      background-color: #a0aec0;
+      color: white;
+      margin-top: 0.5rem;
+    }
+    #btn-save {
+      background-color: #38a169;
+      color: white;
+    }
+  </style>
+</head>
+<body class="p-6">
+  <header class="text-center mb-8">
+    <h1 class="text-4xl font-bold">Calendario de Reservas</h1>
+    <p class="text-black">SOUL Concept Studio</p>
+  </header>
+
+  <div class="text-center mb-4">
+    <label for="fecha" class="font-medium mr-2">Selecciona una fecha:</label>
+    <input type="date" id="fecha" class="p-2 rounded border border-gray-300" />
+  </div>
+
+  <main class="card p-4 overflow-x-auto">
+    <div class="grid grid-cols-3 gap-4" id="calendar-columns">
+      <!-- Columnas se insertan aquí -->
+    </div>
+  </main>
+
+  <!-- Modal -->
+  <div id="modal-bg" class="flex">
+    <div id="modal">
+      <h2 id="modal-title">Nueva Reserva</h2>
+      <form id="res-form">
+        <label for="email">Correo electrónico</label>
+        <input type="email" id="email" required placeholder="cliente@correo.com" />
+        
+        <label for="nombre">Nombre</label>
+        <input type="text" id="nombre" required />
+        <label for="Telefono">Telefono</label>
+        <input type="text" id="telefono" required />
+
+        <label for="servicios">Servicios</label>
+        <select id="servicios"></select>
+
+        <label for="total">Total (€)</label>
+        <input type="number" id="total" min="0" step="0.01" required readonly />
+
+        <input type="hidden" id="manicurista" />
+        <input type="hidden" id="hora" />
+        <input type="hidden" id="fecha-hidden" />
+
+        <button type="submit" id="btn-save">Guardar</button>
+        <button type="button" id="btn-delete" style="display:none;">Eliminar</button>
+        <button type="button" id="btn-cancel">Cancelar</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyD08h44cuSgH33LCfgeUOquRtK5q-WLhl4",
+      authDomain: "soul-concept-studio-37175.firebaseapp.com",
+      projectId: "soul-concept-studio-37175",
+      storageBucket: "soul-concept-studio-37175.appspot.com",
+      messagingSenderId: "1012154216474",
+      appId: "1:1012154216474:web:e43609177c22da585be1a3",
+      measurementId: "G-ZLL107ZRDP"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const serviciosDisponibles = [
+      { nombre: "ACRILICO (LARGO 1-2)", precio: 30, tiempo: 120 },
+      { nombre: "ACRILICO (LARGO 3-4)", precio: 35, tiempo: 135 },
+      { nombre: "BABY BOOMER", precio: 35, tiempo: 120 },
+      { nombre: "CAPA FLEX (REFUERZO)", precio: 25, tiempo: 120 },
+      { nombre: "GEL (LARGO 1-2)", precio: 30, tiempo: 120 },
+      { nombre: "GEL (LARGO 3-4)", precio: 35, tiempo: 135 },
+      { nombre: "MANICURA EXPRESS", precio: 15, tiempo: 45 },
+      { nombre: "MANICURA SEMIPERMANENTE (CON RETIRO)", precio: 20, tiempo: 120 },
+      { nombre: "MANICURA SEMIPERMANENTE (PRIMERA PUESTA)", precio: 18, tiempo: 60 },
+      { nombre: "MANICURA TRADICIONAL (SIN ESMALTE)", precio: 10, tiempo: 30 },
+      { nombre: "PEDICURA (SOLO ESMALTE SEMIPERMANENTE)", precio: 18, tiempo: 60 },
+      { nombre: "PEDICURA (SOLO ESMALTE TRADICIONAL)", precio: 10, tiempo: 45 },
+      { nombre: "PEDICURA + (ESMALTE TRADICIONAL COMPLETO)", precio: 20, tiempo: 90 },
+      { nombre: "PEDICURA COMPLETA + (ESMALTE SEMIPERMANENTE)", precio: 28, tiempo: 135 },
+      { nombre: "PEDICURA TRADICIONAL (SIN ESMALTE)", precio: 18, tiempo: 60 },
+      { nombre: "RECONSTRUCCION UÑAS MORDIDAS", precio: 35, tiempo: 120 },
+      { nombre: "RETIRO ACRILICO", precio: 12, tiempo: 60 },
+      { nombre: "RETIRO GEL", precio: 12, tiempo: 60 },
+      { nombre: "RETIRO SEMIPERMANENTE", precio: 7, tiempo: 60 },
+      { nombre: "SOLO CORTAR UÑAS (MANOS)", precio: 5, tiempo: 20 },
+      { nombre: "SOLO CORTAR UÑAS (PIES)", precio: 5, tiempo: 30 },
+      { nombre: "UÑA ROTA (MANOS)", precio: 2, tiempo: 15 },
+      { nombre: "UÑA ROTA (PIES)", precio: 3, tiempo: 15 },
+      { nombre: "UÑAS ENCARNADAS", precio: 2, tiempo: 5 }
+    ];
+
+    const horas = Array.from({ length: 12 }, (_, i) => `${(i + 9).toString().padStart(2, '0')}:00`);
+    const manicuristas = ['norleannys', 'dalia'];
+    const calendarColumns = document.getElementById('calendar-columns');
+    const fechaInput = document.getElementById('fecha');
+
+    const modalBg = document.getElementById('modal-bg');
+    const modalTitle = document.getElementById('modal-title');
+    const form = document.getElementById('res-form');
+    const emailInput = document.getElementById('email');
+    const nombreInput = document.getElementById('nombre');
+    const serviciosSelect = document.getElementById('servicios');
+    const totalInput = document.getElementById('total');
+    const manicuristaInput = document.getElementById('manicurista');
+    const horaInput = document.getElementById('hora');
+    const fechaHiddenInput = document.getElementById('fecha-hidden');
+    const btnDelete = document.getElementById('btn-delete');
+    const btnCancel = document.getElementById('btn-cancel');
+
+    let reservas = [];
+
+    // Carga opciones servicios en <select multiple>
+    function cargarServiciosOptions() {
+      serviciosSelect.innerHTML = '';
+      serviciosDisponibles.forEach(serv => {
+        const option = document.createElement('option');
+        option.value = serv.nombre;
+        option.textContent = `${serv.nombre} - €${serv.precio}`;
+        serviciosSelect.appendChild(option);
+      });
+    }
+    cargarServiciosOptions();
+
+    // Suma precios y calcula total en base a servicios seleccionados
+    function actualizarTotal() {
+      const seleccionados = Array.from(serviciosSelect.selectedOptions).map(o => o.value);
+      let suma = 0;
+      seleccionados.forEach(nombreServ => {
+        const serv = serviciosDisponibles.find(s => s.nombre === nombreServ);
+        if (serv) suma += serv.precio;
+      });
+      totalInput.value = suma.toFixed(2);
+    }
+    serviciosSelect.addEventListener('change', actualizarTotal);
+
+    // Formatea reserva para mostrar en calendario
+    function formatearReservaTexto(data) {
+      return `${data.nombre} · ${data.servicios.join(", ")} · €${data.total}`;
+    }
+
+    // Función para saber cuántos slots ocupa una reserva (según duración en minutos)
+    function slotsOcupados(servicios) {
+      let maxTiempo = 0;
+      servicios.forEach(nombreServ => {
+        const serv = serviciosDisponibles.find(s => s.nombre === nombreServ);
+        if (serv && serv.tiempo > maxTiempo) maxTiempo = serv.tiempo;
+      });
+      // Cada slot es 60 minutos, redondeamos hacia arriba
+      return Math.ceil(maxTiempo / 60);
+    }
+
+    // Renderizar calendario
+    function renderCalendario() {
+      calendarColumns.innerHTML = "";
+
+      // Columna de horas
+      const horaCol = document.createElement("div");
+      horaCol.innerHTML = `<div class="column-header">Horas</div>` +
+        horas.map(h => `<div class="hour-slot">${h}</div>`).join("");
+      calendarColumns.appendChild(horaCol);
+
+      // Columnas manicuristas
+      manicuristas.forEach(manicurista => {
+        const col = document.createElement("div");
+        col.dataset.manicurista = manicurista;
+        col.innerHTML = `<div class="column-header">${manicurista.charAt(0).toUpperCase() + manicurista.slice(1)}</div>`;
+        
+        // Slots horarios disponibles (llenamos con divs vacíos)
+        for (let i = 0; i < horas.length; i++) {
+          const slotDiv = document.createElement("div");
+          slotDiv.classList.add("res-slot");
+          slotDiv.dataset.hora = horas[i];
+          slotDiv.dataset.index = i;
+          slotDiv.textContent = "";
+          slotDiv.style.minHeight = "80px";
+          col.appendChild(slotDiv);
+        }
+        calendarColumns.appendChild(col);
+      });
+
+      // Añadir reservas
+      reservas.forEach(res => {
+        if (res.fecha !== fechaInput.value) return; // Sólo reservas del día seleccionado
+
+        const col = calendarColumns.querySelector(`[data-manicurista="${res.manicurista}"]`);
+        if (!col) return;
+
+        // Calcular índice de hora para la reserva
+        const startIndex = horas.indexOf(res.hora);
+        if (startIndex === -1) return;
+
+        // Cuántos slots ocupa
+        const duracionSlots = slotsOcupados(res.servicios);
+
+        // Ocupa slots (altura)
+        for (let i = startIndex; i < startIndex + duracionSlots && i < horas.length; i++) {
+          const slotDiv = col.children[i + 1]; // +1 para saltar header
+          if (i === startIndex) {
+            // Primer slot muestra reserva
+            slotDiv.textContent = formatearReservaTexto(res);
+            slotDiv.style.backgroundColor = "rgba(56, 161, 105, 0.7)";
+            slotDiv.style.color = "white";
+            slotDiv.style.fontWeight = "700";
+            slotDiv.style.borderRadius = "0.5rem";
+            slotDiv.style.cursor = "pointer";
+            slotDiv.style.position = "relative";
+            slotDiv.dataset.reservaId = res.id;
+            slotDiv.dataset.isFirst = "true";
+            slotDiv.style.height = (50 * duracionSlots) + "px";
+            // Ocultar slots siguientes que ocupa la reserva
+            for (let j = 1; j < duracionSlots; j++) {
+              if (col.children[startIndex + 1 + j]) {
+                col.children[startIndex + 1 + j].style.display = "none";
+              }
+            }
+          } else {
+            // Los demás slots quedan ocultos porque se muestran en el primer slot
+            slotDiv.style.display = "none";
+          }
+        }
+      });
+
+      // Añadir evento click en slots vacíos para crear reserva
+      calendarColumns.querySelectorAll(".res-slot").forEach(slot => {
+        // Solo si slot visible y sin reserva
+        if (slot.style.display === "none" || slot.dataset.reservaId) return;
+
+        slot.onclick = () => {
+          abrirModalNuevaReserva(
+            slot.parentElement.dataset.manicurista,
+            slot.dataset.hora,
+            fechaInput.value
+          );
+        };
+      });
+
+      // Añadir evento click en reservas para editar/eliminar
+      calendarColumns.querySelectorAll(".res-slot[data-reserva-id]").forEach(slot => {
+        slot.onclick = () => {
+          const resId = slot.dataset.reservaId;
+          abrirModalEditarReserva(resId);
+        };
+      });
+    }
+
+    // Abrir modal para nueva reserva
+    function abrirModalNuevaReserva(manicurista, hora, fecha) {
+      modalTitle.textContent = "Nueva Reserva";
+      form.reset();
+      btnDelete.style.display = "none";
+      manicuristaInput.value = manicurista;
+      horaInput.value = hora;
+      fechaHiddenInput.value = fecha;
+      totalInput.value = "0.00";
+      actualizarTotal();
+      emailInput.focus();
+      modalBg.style.display = "flex";
+    }
+
+    // Abrir modal para editar reserva existente
+    function abrirModalEditarReserva(resId) {
+      const res = reservas.find(r => r.id === resId);
+      if (!res) return alert("Reserva no encontrada");
+
+      modalTitle.textContent = "Editar Reserva";
+      emailInput.value = res.email;
+      nombreInput.value = res.nombre;
+      manicuristaInput.value = res.manicurista;
+      horaInput.value = res.hora;
+      fechaHiddenInput.value = res.fecha;
+      
+      // Seleccionar servicios en <select multiple>
+      Array.from(serviciosSelect.options).forEach(option => {
+        option.selected = res.servicios.includes(option.value);
+      });
+      actualizarTotal();
+      btnDelete.style.display = "block";
+      modalBg.style.display = "flex";
+    }
+
+    // Cerrar modal
+    btnCancel.onclick = () => {
+      modalBg.style.display = "none";
+    };
+    modalBg.onclick = (e) => {
+      if (e.target === modalBg) {
+        modalBg.style.display = "none";
+      }
+    };
+
+    // Guardar reserva (crear o actualizar)
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+
+      const email = emailInput.value.trim();
+      const nombre = nombreInput.value.trim();
+      const serviciosSel = Array.from(serviciosSelect.selectedOptions).map(o => o.value);
+      const total = parseFloat(totalInput.value);
+      const manicurista = manicuristaInput.value;
+      const hora = horaInput.value;
+      const fecha = fechaHiddenInput.value;
+
+      if (!email || !nombre || serviciosSel.length === 0) {
+        alert("Por favor, complete todos los campos.");
+        return;
+      }
+
+      // Verificar que no se solapen reservas para el mismo manicurista en el horario (simple)
+      const duracionSlots = slotsOcupados(serviciosSel);
+      const indiceHora = horas.indexOf(hora);
+
+      // Buscar si hay reserva diferente que choque en rango
+      const choque = reservas.some(r => {
+        if (r.id === form.dataset.editingId) return false; // Ignorar la misma reserva al editar
+        if (r.manicurista !== manicurista) return false;
+        if (r.fecha !== fecha) return false;
+
+        const rIndex = horas.indexOf(r.hora);
+        const rDur = slotsOcupados(r.servicios);
+
+        // Check overlap
+        return (indiceHora < rIndex + rDur) && (rIndex < indiceHora + duracionSlots);
+      });
+      if (choque) {
+        alert("La reserva choca con otra reserva existente para este manicurista y horario.");
+        return;
+      }
+
+      try {
+        if (form.dataset.editingId) {
+          // Actualizar reserva
+          await db.collection('reservas').doc(form.dataset.editingId).update({
+            email, nombre, servicios: serviciosSel, total, manicurista, hora, fecha
+          });
+          alert("Reserva actualizada.");
+        } else {
+          // Crear nueva reserva
+          await db.collection('reservas').add({
+            email, nombre, servicios: serviciosSel, total, manicurista, hora, fecha
+          });
+          alert("Reserva creada.");
+        }
+        modalBg.style.display = "none";
+        cargarReservas();
+      } catch (err) {
+        console.error(err);
+        alert("Error al guardar la reserva.");
+      }
+    };
+
+    // Eliminar reserva
+    btnDelete.onclick = async () => {
+      if (!form.dataset.editingId) return;
+      if (!confirm("¿Seguro que quieres eliminar esta reserva?")) return;
+
+      try {
+        await db.collection('reservas').doc(form.dataset.editingId).delete();
+        alert("Reserva eliminada.");
+        modalBg.style.display = "none";
+        cargarReservas();
+      } catch (err) {
+        console.error(err);
+        alert("Error al eliminar la reserva.");
+      }
+    };
+
+    // Cargar reservas de Firestore
+    async function cargarReservas() {
+      try {
+        const snapshot = await db.collection('reservas').get();
+        reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderCalendario();
+      } catch (err) {
+        console.error(err);
+        alert("Error al cargar reservas.");
+      }
+    }
+
+    // Al cambiar fecha, recargar calendario
+    fechaInput.onchange = () => {
+      cargarReservas();
+    };
+
+    // Iniciar fecha hoy y cargar
+    fechaInput.value = new Date().toISOString().slice(0,10);
+    cargarReservas();
+  </script>
+</body>
+</html>
